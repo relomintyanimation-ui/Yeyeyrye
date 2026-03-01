@@ -1,11 +1,11 @@
 import asyncio
+import os
+import uvicorn
 import requests
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse
+from contextlib import asynccontextmanager
 
-app = FastAPI()
-
-# URLs ko store karne ke liye list
 ping_list = []
 
 # Background Task: Har 5 minute mein jagane wala function
@@ -13,21 +13,24 @@ async def keep_awake():
     while True:
         for url in ping_list:
             try:
-                # Sirf ping karna hai, data download nahi karna
                 requests.get(url, timeout=5)
                 print(f"Pinged successfully: {url}")
             except Exception as e:
                 print(f"Error pinging {url}: {e}")
         
-        # 300 seconds (5 minute) ka wait, taaki Render block na kare
+        # 300 seconds (5 minute) ka wait
         await asyncio.sleep(300)
 
-# Server start hote hi pinging chalu
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(keep_awake())
+# Naya 'Lifespan' tarika (Jisse Deprecation Warning nahi aayegi)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(keep_awake())
+    yield
+    task.cancel()
 
-# HTML Dashboard UI
+app = FastAPI(lifespan=lifespan)
+
+# HTML Dashboard
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     html_content = """
@@ -68,10 +71,15 @@ async def dashboard():
     """
     return html_content
 
-# Naya URL list mein add karne ka logic
+# Naya URL list mein add karna
 @app.post("/add", response_class=HTMLResponse)
 async def add_url(url: str = Form(...)):
     if url not in ping_list:
         ping_list.append(url)
         return f"<h3>URL Added Successfully!</h3><p>{url} will now be pinged every 5 minutes.</p><a href='/'>Go Back</a>"
     return f"<h3>URL is already in the list!</h3><a href='/'>Go Back</a>"
+
+# Yeh line server ko 'exit early' hone se rokegi aur continuously chalayegi
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
